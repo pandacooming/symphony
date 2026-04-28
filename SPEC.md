@@ -269,7 +269,7 @@ Fields:
 - `claimed` (set of issue IDs reserved/running/retrying)
 - `retry_attempts` (map `issue_id -> RetryEntry`)
 - `completed` (set of issue IDs; bookkeeping only, not dispatch gating)
-- `codex_totals` (aggregate tokens + runtime seconds)
+- `agent_totals` (aggregate tokens + runtime seconds for all agent types)
 - `codex_rate_limits` (latest rate-limit snapshot from agent events)
 
 ### 4.2 Stable Identifiers and Normalization Rules
@@ -409,6 +409,12 @@ Fields:
 
 Fields:
 
+- `kind` (string)
+  - Supported values: `codex`, `claude-code`, `opencode`, `openclaw`, `hermes`
+  - Default: `codex`
+  - When `kind` is `codex`, the `codex.*` config fields are used for agent settings.
+  - When `kind` is not `codex`, the `codex.*` keys are silently ignored and generic agent
+    settings from `agent.*` fields are used instead.
 - `max_concurrent_agents` (integer)
   - Default: `10`
   - Changes SHOULD be re-applied at runtime and affect subsequent dispatch decisions.
@@ -423,6 +429,28 @@ Fields:
   - Default: empty map.
   - State keys are normalized (`lowercase`) for lookup.
   - Invalid entries (non-positive or non-numeric) are ignored.
+- `command` (string, OPTIONAL)
+  - Overrides the default command for the selected agent kind.
+  - Default commands per kind:
+    - `codex`: `codex app-server`
+    - `claude-code`: `claude --acp --stdio`
+    - `opencode`: `opencode --acp --stdio`
+    - `openclaw`: `openclaw --acp --stdio`
+    - `hermes`: `hermes chat --acp --stdio`
+- `model` (string, OPTIONAL)
+  - Model override for non-Codex agents.
+- `provider` (string, OPTIONAL)
+  - Provider override for non-Codex agents.
+- `approval_policy` (string or map, OPTIONAL)
+  - Approval policy for non-Codex agents.
+- `thread_sandbox` (string, OPTIONAL)
+  - Default: `workspace-write`
+- `turn_timeout_ms` (integer, OPTIONAL)
+  - Default: `3600000` (1 hour)
+- `read_timeout_ms` (integer, OPTIONAL)
+  - Default: `5000`
+- `stall_timeout_ms` (integer, OPTIONAL)
+  - Default: `300000` (5 minutes)
 
 #### 5.3.6 `codex` (object)
 
@@ -583,10 +611,14 @@ not require recognizing or validating extension fields unless that extension is 
 - `hooks.after_run`: shell script or null
 - `hooks.before_remove`: shell script or null
 - `hooks.timeout_ms`: integer, default `60000`
+- `agent.kind`: string, default `codex`, supported `codex`, `claude-code`, `opencode`, `openclaw`, `hermes`
 - `agent.max_concurrent_agents`: integer, default `10`
 - `agent.max_turns`: integer, default `20`
 - `agent.max_retry_backoff_ms`: integer, default `300000` (5m)
 - `agent.max_concurrent_agents_by_state`: map of positive integers, default `{}`
+- `agent.command`: shell command string, defaults vary by kind (see 5.3.5)
+- `agent.model`: string, optional, for non-Codex agents
+- `agent.provider`: string, optional, for non-Codex agents
 - `codex.command`: shell command string, default `codex app-server`
 - `codex.approval_policy`: Codex `AskForApproval` value, default implementation-defined
 - `codex.thread_sandbox`: Codex `SandboxMode` value, default implementation-defined
@@ -1281,12 +1313,12 @@ SHOULD return:
 - `running` (list of running session rows)
 - each running row SHOULD include `turn_count`
 - `retrying` (list of retry queue rows)
-- `codex_totals`
+- `agent_totals`
   - `input_tokens`
   - `output_tokens`
   - `total_tokens`
   - `seconds_running` (aggregate runtime seconds as of snapshot time, including active sessions)
-- `rate_limits` (latest coding-agent rate limit payload, if available)
+- `rate_limits` (latest agent rate limit payload, if available)
 
 RECOMMENDED snapshot error modes:
 
@@ -1423,7 +1455,7 @@ Minimum endpoints:
           "error": "no available orchestrator slots"
         }
       ],
-      "codex_totals": {
+      "agent_totals": {
         "input_tokens": 5000,
         "output_tokens": 2400,
         "total_tokens": 7400,
@@ -1690,7 +1722,7 @@ function start_service():
     claimed: set(),
     retry_attempts: {},
     completed: set(),
-    codex_totals: {input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+    agent_totals: {input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
     codex_rate_limits: null
   }
 

@@ -83,6 +83,150 @@ Optional flags:
 The `WORKFLOW.md` file uses YAML front matter for configuration, plus a Markdown body used as the
 Codex session prompt.
 
+### Multi-Agent Support
+
+Symphony supports multiple agent kinds via the `agent.kind` field. The agent kind determines which
+runner is used and how its configuration is loaded.
+
+#### `agent.kind` Enum Values
+
+| Kind          | Default Command                    | Description                              |
+|---------------|-----------------------------------|------------------------------------------|
+| `codex`       | `codex app-server`                | OpenAI Codex (default)                   |
+| `claude-code` | `claude --acp --stdio`            | Anthropic Claude Code                    |
+| `opencode`    | `opencode --acp --stdio`          | OpenCode (open-source agent)             |
+| `openclaw`    | `openclaw --acp --stdio`          | OpenClaw (open-source agent)             |
+| `hermes`      | `hermes chat --acp --stdio`       | Hermes (Nous Research agent)             |
+
+When `agent.kind` is `codex`, the `codex.*` config fields control agent behavior. When `agent.kind`
+is any other value, the `codex.*` fields are silently ignored and the generic `agent.*` fields are
+used instead.
+
+#### Example WORKFLOW.md by Agent Kind
+
+**Codex (default):**
+
+```md
+---
+tracker:
+  kind: linear
+  project_slug: "my-project"
+workspace:
+  root: ~/code/workspaces
+agent:
+  max_concurrent_agents: 10
+  max_turns: 20
+codex:
+  command: codex app-server
+  approval_policy: never
+  thread_sandbox: workspace-write
+---
+
+You are working on a Linear issue {{ issue.identifier }}.
+```
+
+**Claude Code:**
+
+```md
+---
+tracker:
+  kind: linear
+  project_slug: "my-project"
+workspace:
+  root: ~/code/workspaces
+agent:
+  kind: claude-code
+  max_concurrent_agents: 10
+  max_turns: 20
+  model: "claude-sonnet-4-20250514"
+  provider: "anthropic"
+  command: claude --acp --stdio
+---
+
+You are working on a Linear issue {{ issue.identifier }}.
+```
+
+**OpenCode:**
+
+```md
+---
+tracker:
+  kind: linear
+  project_slug: "my-project"
+workspace:
+  root: ~/code/workspaces
+agent:
+  kind: opencode
+  max_concurrent_agents: 10
+  max_turns: 20
+  command: opencode --acp --stdio
+---
+
+You are working on a Linear issue {{ issue.identifier }}.
+```
+
+**OpenClaw:**
+
+```md
+---
+tracker:
+  kind: linear
+  project_slug: "my-project"
+workspace:
+  root: ~/code/workspaces
+agent:
+  kind: openclaw
+  max_concurrent_agents: 10
+  max_turns: 20
+  command: openclaw --acp --stdio
+---
+
+You are working on a Linear issue {{ issue.identifier }}.
+```
+
+**Hermes:**
+
+```md
+---
+tracker:
+  kind: linear
+  project_slug: "my-project"
+workspace:
+  root: ~/code/workspaces
+agent:
+  kind: hermes
+  max_concurrent_agents: 10
+  max_turns: 20
+  command: hermes chat --acp --stdio
+---
+
+You are working on a Linear issue {{ issue.identifier }}.
+```
+
+### Environment Variables
+
+Symphony uses environment variables for sensitive configuration. The following are commonly used:
+
+| Variable           | Description                                      | Used By           |
+|--------------------|------------------------------------------------|-------------------|
+| `LINEAR_API_KEY`   | Linear personal access token                   | tracker           |
+| `CODEX_BIN`        | Path to Codex binary (optional)                | Codex agents      |
+| `ANTHROPIC_API_KEY`| Anthropic API key (for Claude Code)            | claude-code       |
+| `OPENAI_API_KEY`   | OpenAI API key                                 | Codex, OpenCode   |
+
+Environment variables are referenced in `WORKFLOW.md` using `$VAR_NAME` syntax:
+
+```yaml
+tracker:
+  api_key: $LINEAR_API_KEY
+workspace:
+  root: $SYMPHONY_WORKSPACE_ROOT
+agent:
+  command: "$CODEX_BIN --config 'model=\"gpt-5.5\"' app-server"
+```
+
+### Full Configuration Reference
+
 Minimal example:
 
 ```md
