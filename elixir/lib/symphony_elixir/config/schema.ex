@@ -150,6 +150,9 @@ defmodule SymphonyElixir.Config.Schema do
     end
   end
 
+  # Agent kinds supported by Symphony
+  @agent_kinds ["codex", "claude-code", "opencode", "openclaw", "hermes"]
+
   defmodule Codex do
     @moduledoc false
     use Ecto.Schema
@@ -157,8 +160,17 @@ defmodule SymphonyElixir.Config.Schema do
 
     @primary_key false
     embedded_schema do
+      # kind identifies which agent adapter to use
+      field(:kind, :string, default: "codex")
+      # command is the shell command to launch the agent (agent-specific)
       field(:command, :string, default: "codex app-server")
+      # provider for API-based agents (claude-code, opencode, openclaw, hermes)
+      field(:provider, :string)
+      field(:model, :string)
+      # agent-specific config stored as JSON string or map
+      field(:config_json, :string)
 
+      # Codex-specific fields (also used as defaults for other agents where applicable)
       field(:approval_policy, StringOrMap,
         default: %{
           "reject" => %{
@@ -182,7 +194,11 @@ defmodule SymphonyElixir.Config.Schema do
       |> cast(
         attrs,
         [
+          :kind,
           :command,
+          :provider,
+          :model,
+          :config_json,
           :approval_policy,
           :thread_sandbox,
           :turn_sandbox_policy,
@@ -192,7 +208,7 @@ defmodule SymphonyElixir.Config.Schema do
         ],
         empty_values: []
       )
-      |> validate_required([:command])
+      |> validate_inclusion(:kind, @agent_kinds)
       |> validate_number(:turn_timeout_ms, greater_than: 0)
       |> validate_number(:read_timeout_ms, greater_than: 0)
       |> validate_number(:stall_timeout_ms, greater_than_or_equal_to: 0)
@@ -267,7 +283,7 @@ defmodule SymphonyElixir.Config.Schema do
     embeds_one(:workspace, Workspace, on_replace: :update, defaults_to_struct: true)
     embeds_one(:worker, Worker, on_replace: :update, defaults_to_struct: true)
     embeds_one(:agent, Agent, on_replace: :update, defaults_to_struct: true)
-    embeds_one(:codex, Codex, on_replace: :update, defaults_to_struct: true)
+    embeds_one(:agent, Codex, on_replace: :update, defaults_to_struct: true)
     embeds_one(:hooks, Hooks, on_replace: :update, defaults_to_struct: true)
     embeds_one(:observability, Observability, on_replace: :update, defaults_to_struct: true)
     embeds_one(:server, Server, on_replace: :update, defaults_to_struct: true)
@@ -291,7 +307,7 @@ defmodule SymphonyElixir.Config.Schema do
 
   @spec resolve_turn_sandbox_policy(%__MODULE__{}, Path.t() | nil) :: map()
   def resolve_turn_sandbox_policy(settings, workspace \\ nil) do
-    case settings.codex.turn_sandbox_policy do
+    case settings.agent.turn_sandbox_policy do
       %{} = policy ->
         policy
 
@@ -306,7 +322,7 @@ defmodule SymphonyElixir.Config.Schema do
   @spec resolve_runtime_turn_sandbox_policy(%__MODULE__{}, Path.t() | nil, keyword()) ::
           {:ok, map()} | {:error, term()}
   def resolve_runtime_turn_sandbox_policy(settings, workspace \\ nil, opts \\ []) do
-    case settings.codex.turn_sandbox_policy do
+    case settings.agent.turn_sandbox_policy do
       %{} = policy ->
         {:ok, policy}
 
@@ -378,12 +394,12 @@ defmodule SymphonyElixir.Config.Schema do
     }
 
     codex = %{
-      settings.codex
-      | approval_policy: normalize_keys(settings.codex.approval_policy),
-        turn_sandbox_policy: normalize_optional_map(settings.codex.turn_sandbox_policy)
+      settings.agent
+      | approval_policy: normalize_keys(settings.agent.approval_policy),
+        turn_sandbox_policy: normalize_optional_map(settings.agent.turn_sandbox_policy)
     }
 
-    %{settings | tracker: tracker, workspace: workspace, codex: codex}
+    %{settings | agent: codex}
   end
 
   defp normalize_keys(value) when is_map(value) do

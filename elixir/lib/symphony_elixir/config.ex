@@ -6,6 +6,30 @@ defmodule SymphonyElixir.Config do
   alias SymphonyElixir.Config.Schema
   alias SymphonyElixir.Workflow
 
+  # Agent kind atoms (used in public API)
+  @type agent_kind :: :codex | :claude_code | :opencode | :openclaw | :hermes
+
+  # Valid agent kind strings (used in config)
+  @agent_kind_strings ["codex", "claude-code", "opencode", "openclaw", "hermes"]
+
+  # Agent kind string to atom mapping
+  @kind_string_to_atom %{
+    "codex" => :codex,
+    "claude-code" => :claude_code,
+    "opencode" => :opencode,
+    "openclaw" => :openclaw,
+    "hermes" => :hermes
+  }
+
+  # Default commands for each agent kind
+  @default_commands %{
+    :codex => "codex app-server",
+    :claude_code => "claude --acp --stdio",
+    :opencode => "opencode --acp --stdio",
+    :openclaw => "openclaw --acp --stdio",
+    :hermes => "hermes chat --acp --stdio"
+  }
+
   @default_prompt_template """
   You are working on a Linear issue.
 
@@ -46,6 +70,147 @@ defmodule SymphonyElixir.Config do
       {:error, reason} ->
         raise ArgumentError, message: format_config_error(reason)
     end
+  end
+
+  @spec agent_kind() :: agent_kind()
+  def agent_kind do
+    settings = settings!()
+    kind_str = settings.agent.kind || "codex"
+
+    case Map.get(@kind_string_to_atom, kind_str) do
+      nil ->
+        raise ArgumentError,
+          message: "Unknown agent kind: #{inspect(kind_str)}. Valid kinds are: #{Enum.join(@agent_kind_strings, ", ")}"
+
+      atom ->
+        atom
+    end
+  end
+
+  @spec agent_kind_string() :: String.t()
+  def agent_kind_string do
+    settings = settings!()
+    settings.agent.kind || "codex"
+  end
+
+  @spec claude_code_config() :: %{
+          command: String.t(),
+          model: String.t() | nil,
+          provider: String.t() | nil,
+          api_key: String.t() | nil,
+          endpoint: String.t() | nil,
+          approval_policy: String.t() | map(),
+          thread_sandbox: String.t(),
+          turn_timeout_ms: pos_integer(),
+          read_timeout_ms: pos_integer(),
+          stall_timeout_ms: non_neg_integer()
+        }
+  def claude_code_config do
+    settings = settings!()
+    agent = settings.agent
+
+    %{
+      command: agent.command || Map.get(@default_commands, :claude_code),
+      model: agent.model,
+      provider: agent.provider,
+      api_key: nil,
+      endpoint: nil,
+      approval_policy: agent.approval_policy,
+      thread_sandbox: agent.thread_sandbox || "workspace-write",
+      turn_timeout_ms: agent.turn_timeout_ms || 3_600_000,
+      read_timeout_ms: agent.read_timeout_ms || 5_000,
+      stall_timeout_ms: agent.stall_timeout_ms || 300_000
+    }
+  end
+
+  @spec opencode_config() :: %{
+          command: String.t(),
+          model: String.t() | nil,
+          provider: String.t() | nil,
+          api_key: String.t() | nil,
+          endpoint: String.t() | nil,
+          approval_policy: String.t() | map(),
+          thread_sandbox: String.t(),
+          turn_timeout_ms: pos_integer(),
+          read_timeout_ms: pos_integer(),
+          stall_timeout_ms: non_neg_integer()
+        }
+  def opencode_config do
+    settings = settings!()
+    agent = settings.agent
+
+    %{
+      command: agent.command || Map.get(@default_commands, :opencode),
+      model: agent.model,
+      provider: agent.provider,
+      api_key: nil,
+      endpoint: nil,
+      approval_policy: agent.approval_policy,
+      thread_sandbox: agent.thread_sandbox || "workspace-write",
+      turn_timeout_ms: agent.turn_timeout_ms || 3_600_000,
+      read_timeout_ms: agent.read_timeout_ms || 5_000,
+      stall_timeout_ms: agent.stall_timeout_ms || 300_000
+    }
+  end
+
+  @spec openclaw_config() :: %{
+          command: String.t(),
+          model: String.t() | nil,
+          provider: String.t() | nil,
+          api_key: String.t() | nil,
+          endpoint: String.t() | nil,
+          approval_policy: String.t() | map(),
+          thread_sandbox: String.t(),
+          turn_timeout_ms: pos_integer(),
+          read_timeout_ms: pos_integer(),
+          stall_timeout_ms: non_neg_integer()
+        }
+  def openclaw_config do
+    settings = settings!()
+    agent = settings.agent
+
+    %{
+      command: agent.command || Map.get(@default_commands, :openclaw),
+      model: agent.model,
+      provider: agent.provider,
+      api_key: nil,
+      endpoint: nil,
+      approval_policy: agent.approval_policy,
+      thread_sandbox: agent.thread_sandbox || "workspace-write",
+      turn_timeout_ms: agent.turn_timeout_ms || 3_600_000,
+      read_timeout_ms: agent.read_timeout_ms || 5_000,
+      stall_timeout_ms: agent.stall_timeout_ms || 300_000
+    }
+  end
+
+  @spec hermes_config() :: %{
+          command: String.t(),
+          model: String.t() | nil,
+          provider: String.t() | nil,
+          api_key: String.t() | nil,
+          endpoint: String.t() | nil,
+          approval_policy: String.t() | map(),
+          thread_sandbox: String.t(),
+          turn_timeout_ms: pos_integer(),
+          read_timeout_ms: pos_integer(),
+          stall_timeout_ms: non_neg_integer()
+        }
+  def hermes_config do
+    settings = settings!()
+    agent = settings.agent
+
+    %{
+      command: agent.command || Map.get(@default_commands, :hermes),
+      model: agent.model,
+      provider: agent.provider,
+      api_key: nil,
+      endpoint: nil,
+      approval_policy: agent.approval_policy,
+      thread_sandbox: agent.thread_sandbox || "workspace-write",
+      turn_timeout_ms: agent.turn_timeout_ms || 3_600_000,
+      read_timeout_ms: agent.read_timeout_ms || 5_000,
+      stall_timeout_ms: agent.stall_timeout_ms || 300_000
+    }
   end
 
   @spec max_concurrent_agents_for_state(term()) :: pos_integer()
