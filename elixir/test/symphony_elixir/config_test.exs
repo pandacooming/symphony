@@ -210,5 +210,81 @@ defmodule SymphonyElixir.ConfigTest do
       # but the agent_kind should work
       assert Config.agent_kind() == :codex
     end
+
+    test "load with only tracker + workspace (no agent.kind) → defaults to codex" do
+      # Legacy format: no agent section at all, no codex section
+      # Agent kind should default to :codex
+      write_workflow_file!(Workflow.workflow_file_path(),
+        agent_kind: nil,
+        codex_command: nil
+      )
+
+      assert Config.agent_kind() == :codex
+    end
+
+    test "load with codex.command set but no agent.kind → works as before" do
+      write_workflow_file!(Workflow.workflow_file_path(),
+        agent_kind: nil,
+        codex_command: "codex app-server",
+        codex_thread_sandbox: "workspace-write"
+      )
+
+      assert Config.agent_kind() == :codex
+      assert Config.agent_kind_string() == "codex"
+    end
+
+    test "load with agent.kind: codex and codex.* config → works" do
+      write_workflow_file!(Workflow.workflow_file_path(),
+        agent_kind: "codex",
+        codex_command: "codex app-server",
+        codex_thread_sandbox: "workspace-write",
+        codex_turn_timeout_ms: 3_600_000
+      )
+
+      assert Config.agent_kind() == :codex
+    end
+
+    test "load with agent.kind: opencode and codex.* config present → opencode used, codex.* ignored" do
+      write_workflow_file!(Workflow.workflow_file_path(),
+        agent_kind: "opencode",
+        codex_command: "codex app-server",
+        codex_thread_sandbox: "workspace-write",
+        agent_command: "opencode --acp --stdio"
+      )
+
+      # agent_kind should be opencode, NOT codex
+      assert Config.agent_kind() == :opencode
+      assert Config.agent_kind_string() == "opencode"
+
+      # opencode_config should use its own command, NOT the codex command
+      opencode_cfg = Config.opencode_config()
+      assert opencode_cfg.command == "opencode --acp --stdio"
+    end
+
+    test "agent.kind: codex with existing codex.* config → codex config used" do
+      write_workflow_file!(Workflow.workflow_file_path(),
+        agent_kind: "codex",
+        codex_command: "codex app-server",
+        codex_approval_policy: %{"reject" => %{"sandbox_approval" => true}}
+      )
+
+      assert Config.agent_kind() == :codex
+    end
+
+    test "agent.kind is NOT codex → codex.* keys silently ignored" do
+      write_workflow_file!(Workflow.workflow_file_path(),
+        agent_kind: "claude-code",
+        codex_command: "this-should-be-ignored",
+        codex_thread_sandbox: "this-should-be-ignored",
+        agent_command: "claude --acp --stdio"
+      )
+
+      # agent_kind should be claude_code, NOT codex
+      assert Config.agent_kind() == :claude_code
+
+      # claude_code_config should use its own command, NOT the codex command
+      claude_cfg = Config.claude_code_config()
+      assert claude_cfg.command == "claude --acp --stdio"
+    end
   end
 end

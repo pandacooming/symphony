@@ -305,7 +305,8 @@ defmodule SymphonyElixir.AgentRunner.CodexRunner do
     _ -> :ok
   end
 
-  defp accumulate_token_counts(existing, turn_result) do
+  defp accumulate_token_counts(existing, _turn_result) do
+    # Token accumulation will be implemented when AppServer returns usage data
     existing
   end
 

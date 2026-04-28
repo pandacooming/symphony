@@ -14,7 +14,7 @@ defmodule SymphonyElixir.Orchestrator do
   @failure_retry_base_ms 10_000
   # Slightly above the dashboard render interval so "checking now…" can render.
   @poll_transition_render_delay_ms 20
-  @empty_codex_totals %{
+  @empty_agent_totals %{
     input_tokens: 0,
     output_tokens: 0,
     total_tokens: 0,
@@ -37,7 +37,7 @@ defmodule SymphonyElixir.Orchestrator do
       completed: MapSet.new(),
       claimed: MapSet.new(),
       retry_attempts: %{},
-      codex_totals: nil,
+      agent_totals: nil,
       codex_rate_limits: nil
     ]
   end
@@ -60,7 +60,7 @@ defmodule SymphonyElixir.Orchestrator do
       poll_check_in_progress: false,
       tick_timer_ref: nil,
       tick_token: nil,
-      codex_totals: @empty_codex_totals,
+      agent_totals: @empty_agent_totals,
       codex_rate_limits: nil
     }
 
@@ -202,6 +202,67 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   def handle_info({:codex_worker_update, _issue_id, _update}, state), do: {:noreply, state}
+
+  def handle_info(
+        {:runner_event, issue_id, event_type, data},
+        %{running: running} = state
+      )
+      when is_binary(issue_id) and is_atom(event_type) and is_map(data) do
+    case Map.get(running, issue_id) do
+      nil ->
+        {:noreply, state}
+
+      running_entry ->
+        updated_running_entry =
+          running_entry
+          |> maybe_put_runtime_value(:last_runner_event, event_type)
+          |> maybe_put_runtime_value(:last_runner_timestamp, Map.get(data, :timestamp))
+
+        # Handle token updates if present in event data
+        state =
+          if token_counts = data[:token_counts] do
+            state
+            |> apply_runner_token_delta(token_counts)
+          else
+            state
+          end
+
+        notify_dashboard()
+        {:noreply, %{state | running: Map.put(running, issue_id, updated_running_entry)}}
+    end
+  end
+
+  def handle_info({:runner_event, _issue_id, _event_type, _data}, state), do: {:noreply, state}
+
+  def handle_info(
+        {:runner_done, issue_id, turn_count, stats},
+        %{running: running} = state
+      )
+      when is_binary(issue_id) and is_integer(turn_count) and is_map(stats) do
+    case Map.get(running, issue_id) do
+      nil ->
+        {:noreply, state}
+
+      running_entry ->
+        updated_running_entry =
+          running_entry
+          |> maybe_put_runtime_value(:turn_count, turn_count)
+          |> maybe_put_runtime_value(:last_runner_event, :done)
+
+        # Apply final token counts if present
+        state =
+          if token_counts = stats[:token_counts] do
+            state
+            |> apply_runner_token_delta(token_counts)
+          else
+            state
+          end
+
+        {:noreply, %{state | running: Map.put(running, issue_id, updated_running_entry)}}
+    end
+  end
+
+  def handle_info({:runner_done, _issue_id, _turn_count, _stats}, state), do: {:noreply, state}
 
   def handle_info({:retry_issue, issue_id, retry_token}, state) do
     result =
@@ -465,13 +526,21 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp restart_stalled_issue(state, issue_id, running_entry, now, timeout_ms) do
-    elapsed_ms = stall_elapsed_ms(running_entry, now)
+    last_output_age_ms = stall_elapsed_ms(running_entry, now)
 
-    if is_integer(elapsed_ms) and elapsed_ms > timeout_ms do
+    if is_integer(last_output_age_ms) and last_output_age_ms > timeout_ms do
       identifier = Map.get(running_entry, :identifier, issue_id)
       session_id = running_entry_session_id(running_entry)
 
-      Logger.warning("Issue stalled: issue_id=#{issue_id} issue_identifier=#{identifier} session_id=#{session_id} elapsed_ms=#{elapsed_ms}; restarting with backoff")
+      Logger.warning("Issue stalled: issue_id=#{issue_id} issue_identifier=#{identifier} session_id=#{session_id} last_output_age_ms=#{last_output_age_ms}; restarting with backoff",
+        stall_event: %{
+          issue_id: issue_id,
+          identifier: identifier,
+          session_id: session_id,
+          last_output_age_ms: last_output_age_ms,
+          timeout_ms: timeout_ms
+        }
+      )
 
       next_attempt = next_retry_attempt_from_running(running_entry)
 
@@ -479,7 +548,8 @@ defmodule SymphonyElixir.Orchestrator do
       |> terminate_running_issue(issue_id, false)
       |> schedule_issue_retry(issue_id, next_attempt, %{
         identifier: identifier,
-        error: "stalled for #{elapsed_ms}ms without codex activity"
+        error: "stalled for #{last_output_age_ms}ms without agent activity",
+        last_output_age_ms: last_output_age_ms
       })
     else
       state
@@ -1097,6 +1167,49 @@ defmodule SymphonyElixir.Orchestrator do
     end
   end
 
+  @doc """
+  Return aggregate token totals for a specific issue across all its run attempts.
+  Returns zeros if the issue is not found or has no token data.
+  """
+  @spec total_tokens_for_issue(String.t()) :: %{input_tokens: non_neg_integer(), output_tokens: non_neg_integer(), total_tokens: non_neg_integer()}
+  def total_tokens_for_issue(issue_id) when is_binary(issue_id) do
+    case snapshot() do
+      %{running: running, agent_totals: agent_totals} when is_map(agent_totals) ->
+        running_entry = Map.get(running, issue_id)
+
+        if running_entry do
+          %{
+            input_tokens: Map.get(running_entry, :codex_input_tokens, 0),
+            output_tokens: Map.get(running_entry, :codex_output_tokens, 0),
+            total_tokens: Map.get(running_entry, :codex_total_tokens, 0)
+          }
+        else
+          %{input_tokens: 0, output_tokens: 0, total_tokens: 0}
+        end
+
+      _ ->
+        %{input_tokens: 0, output_tokens: 0, total_tokens: 0}
+    end
+  end
+
+  @doc """
+  Return cumulative token totals across all agents (both completed and running sessions).
+  """
+  @spec total_tokens_all_agents() :: %{input_tokens: non_neg_integer(), output_tokens: non_neg_integer(), total_tokens: non_neg_integer()}
+  def total_tokens_all_agents do
+    case snapshot() do
+      %{agent_totals: agent_totals} when is_map(agent_totals) ->
+        %{
+          input_tokens: Map.get(agent_totals, :input_tokens, 0),
+          output_tokens: Map.get(agent_totals, :output_tokens, 0),
+          total_tokens: Map.get(agent_totals, :total_tokens, 0)
+        }
+
+      _ ->
+        %{input_tokens: 0, output_tokens: 0, total_tokens: 0}
+    end
+  end
+
   @impl true
   def handle_call(:snapshot, _from, state) do
     state = refresh_runtime_config(state)
@@ -1144,7 +1257,7 @@ defmodule SymphonyElixir.Orchestrator do
      %{
        running: running,
        retrying: retrying,
-       codex_totals: state.codex_totals,
+       agent_totals: state.agent_totals,
        rate_limits: Map.get(state, :codex_rate_limits),
        polling: %{
          checking?: state.poll_check_in_progress == true,
@@ -1277,18 +1390,24 @@ defmodule SymphonyElixir.Orchestrator do
   defp record_session_completion_totals(state, running_entry) when is_map(running_entry) do
     runtime_seconds = running_seconds(running_entry.started_at, DateTime.utc_now())
 
-    codex_totals =
+    input_tokens = Map.get(running_entry, :codex_input_tokens, 0)
+    output_tokens = Map.get(running_entry, :codex_output_tokens, 0)
+    total_tokens = Map.get(running_entry, :codex_total_tokens, 0)
+
+    agent_totals =
       apply_token_delta(
-        state.codex_totals,
+        state.agent_totals,
         %{
-          input_tokens: 0,
-          output_tokens: 0,
-          total_tokens: 0,
+          input_tokens: input_tokens,
+          output_tokens: output_tokens,
+          total_tokens: total_tokens,
           seconds_running: runtime_seconds
         }
       )
 
-    %{state | codex_totals: codex_totals}
+    emit_run_attempt_completion_log(running_entry, input_tokens, output_tokens, total_tokens, runtime_seconds)
+
+    %{state | agent_totals: agent_totals}
   end
 
   defp record_session_completion_totals(state, _running_entry), do: state
@@ -1313,14 +1432,17 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp apply_codex_token_delta(
-         %{codex_totals: codex_totals} = state,
+         %{agent_totals: agent_totals} = state,
          %{input_tokens: input, output_tokens: output, total_tokens: total} = token_delta
        )
        when is_integer(input) and is_integer(output) and is_integer(total) do
-    %{state | codex_totals: apply_token_delta(codex_totals, token_delta)}
+    %{state | agent_totals: apply_token_delta(agent_totals, token_delta)}
   end
 
   defp apply_codex_token_delta(state, _token_delta), do: state
+
+  # Alias for apply_codex_token_delta to handle generic runner token updates
+  defp apply_runner_token_delta(state, token_counts), do: apply_codex_token_delta(state, token_counts)
 
   defp apply_codex_rate_limits(%State{} = state, update) when is_map(update) do
     case extract_rate_limits(update) do
@@ -1334,12 +1456,12 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp apply_codex_rate_limits(state, _update), do: state
 
-  defp apply_token_delta(codex_totals, token_delta) do
-    input_tokens = Map.get(codex_totals, :input_tokens, 0) + token_delta.input_tokens
-    output_tokens = Map.get(codex_totals, :output_tokens, 0) + token_delta.output_tokens
-    total_tokens = Map.get(codex_totals, :total_tokens, 0) + token_delta.total_tokens
+  defp apply_token_delta(agent_totals, token_delta) do
+    input_tokens = Map.get(agent_totals, :input_tokens, 0) + token_delta.input_tokens
+    output_tokens = Map.get(agent_totals, :output_tokens, 0) + token_delta.output_tokens
+    total_tokens = Map.get(agent_totals, :total_tokens, 0) + token_delta.total_tokens
 
-    seconds_running = Map.get(codex_totals, :seconds_running, 0) + Map.get(token_delta, :seconds_running, 0)
+    seconds_running = Map.get(agent_totals, :seconds_running, 0) + Map.get(token_delta, :seconds_running, 0)
 
     %{
       input_tokens: max(0, input_tokens),
@@ -1347,6 +1469,28 @@ defmodule SymphonyElixir.Orchestrator do
       total_tokens: max(0, total_tokens),
       seconds_running: max(0, seconds_running)
     }
+  end
+
+  defp emit_run_attempt_completion_log(running_entry, input_tokens, output_tokens, total_tokens, runtime_seconds) do
+    issue_id = Map.get(running_entry, :issue, %{}) |> Map.get(:id, "unknown")
+    identifier = Map.get(running_entry, :identifier, "unknown")
+    session_id = running_entry_session_id(running_entry)
+    attempt = Map.get(running_entry, :retry_attempt, 0)
+    agent_kind = Config.agent_kind_string()
+
+    Logger.info("Run attempt completed",
+      run_attempt: %{
+        issue_id: issue_id,
+        identifier: identifier,
+        session_id: session_id,
+        attempt: attempt,
+        agent_kind: agent_kind,
+        input_tokens: input_tokens,
+        output_tokens: output_tokens,
+        total_tokens: total_tokens,
+        runtime_seconds: runtime_seconds
+      }
+    )
   end
 
   defp extract_token_delta(running_entry, %{event: _, timestamp: _} = update) do

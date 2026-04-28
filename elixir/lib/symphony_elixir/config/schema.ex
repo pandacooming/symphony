@@ -119,6 +119,9 @@ defmodule SymphonyElixir.Config.Schema do
     end
   end
 
+  # Agent kinds supported by Symphony
+  @agent_kinds ["codex", "claude-code", "opencode", "openclaw", "hermes"]
+
   defmodule Agent do
     @moduledoc false
     use Ecto.Schema
@@ -128,10 +131,37 @@ defmodule SymphonyElixir.Config.Schema do
 
     @primary_key false
     embedded_schema do
+      # kind identifies which agent adapter to use (codex, claude-code, opencode, openclaw, hermes)
+      field(:kind, :string, default: "codex")
+      # Orchestration limits
       field(:max_concurrent_agents, :integer, default: 10)
       field(:max_turns, :integer, default: 20)
       field(:max_retry_backoff_ms, :integer, default: 300_000)
       field(:max_concurrent_agents_by_state, :map, default: %{})
+      # Agent runtime settings (from codex.* for backward compat; shared across agent types)
+      # command is the shell command to launch the agent (agent-specific)
+      field(:command, :string, default: "codex app-server")
+      # provider for API-based agents (claude-code, opencode, openclaw, hermes)
+      field(:provider, :string)
+      field(:model, :string)
+      # agent-specific config stored as JSON string or map
+      field(:config_json, :string)
+      # Sandbox and timeout settings
+      field(:approval_policy, Schema.StringOrMap,
+        default: %{
+          "reject" => %{
+            "sandbox_approval" => true,
+            "rules" => true,
+            "mcp_elicitations" => true
+          }
+        }
+      )
+
+      field(:thread_sandbox, :string, default: "workspace-write")
+      field(:turn_sandbox_policy, :map)
+      field(:turn_timeout_ms, :integer, default: 3_600_000)
+      field(:read_timeout_ms, :integer, default: 5_000)
+      field(:stall_timeout_ms, :integer, default: 300_000)
     end
 
     @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
@@ -139,19 +169,36 @@ defmodule SymphonyElixir.Config.Schema do
       schema
       |> cast(
         attrs,
-        [:max_concurrent_agents, :max_turns, :max_retry_backoff_ms, :max_concurrent_agents_by_state],
+        [
+          :kind,
+          :max_concurrent_agents,
+          :max_turns,
+          :max_retry_backoff_ms,
+          :max_concurrent_agents_by_state,
+          :command,
+          :provider,
+          :model,
+          :config_json,
+          :approval_policy,
+          :thread_sandbox,
+          :turn_sandbox_policy,
+          :turn_timeout_ms,
+          :read_timeout_ms,
+          :stall_timeout_ms
+        ],
         empty_values: []
       )
+      |> validate_inclusion(:kind, @agent_kinds)
       |> validate_number(:max_concurrent_agents, greater_than: 0)
       |> validate_number(:max_turns, greater_than: 0)
       |> validate_number(:max_retry_backoff_ms, greater_than: 0)
+      |> validate_number(:turn_timeout_ms, greater_than: 0)
+      |> validate_number(:read_timeout_ms, greater_than: 0)
+      |> validate_number(:stall_timeout_ms, greater_than_or_equal_to: 0)
       |> update_change(:max_concurrent_agents_by_state, &Schema.normalize_state_limits/1)
       |> Schema.validate_state_limits(:max_concurrent_agents_by_state)
     end
   end
-
-  # Agent kinds supported by Symphony
-  @agent_kinds ["codex", "claude-code", "opencode", "openclaw", "hermes"]
 
   defmodule Codex do
     @moduledoc false
@@ -283,7 +330,7 @@ defmodule SymphonyElixir.Config.Schema do
     embeds_one(:workspace, Workspace, on_replace: :update, defaults_to_struct: true)
     embeds_one(:worker, Worker, on_replace: :update, defaults_to_struct: true)
     embeds_one(:agent, Agent, on_replace: :update, defaults_to_struct: true)
-    embeds_one(:agent, Codex, on_replace: :update, defaults_to_struct: true)
+    embeds_one(:codex, Codex, on_replace: :update, defaults_to_struct: true)
     embeds_one(:hooks, Hooks, on_replace: :update, defaults_to_struct: true)
     embeds_one(:observability, Observability, on_replace: :update, defaults_to_struct: true)
     embeds_one(:server, Server, on_replace: :update, defaults_to_struct: true)
@@ -393,13 +440,31 @@ defmodule SymphonyElixir.Config.Schema do
       | root: resolve_path_value(settings.workspace.root, Path.join(System.tmp_dir!(), "symphony_workspaces"))
     }
 
-    codex = %{
-      settings.agent
-      | approval_policy: normalize_keys(settings.agent.approval_policy),
-        turn_sandbox_policy: normalize_optional_map(settings.agent.turn_sandbox_policy)
-    }
+    # When agent.kind is "codex" (explicit or default), use codex.* config fields for agent settings.
+    # This preserves backward compatibility for existing WORKFLOW.md files that use codex.* keys.
+    # When agent.kind is not "codex", codex.* keys are ignored (silently) and agent defaults are used.
+    agent =
+      if settings.agent.kind == "codex" do
+        # Copy codex fields into agent (codex.* takes precedence when kind is codex)
+        %{
+          settings.agent
+          | command: settings.codex.command,
+            provider: settings.codex.provider,
+            model: settings.codex.model,
+            config_json: settings.codex.config_json,
+            approval_policy: normalize_keys(settings.codex.approval_policy),
+            thread_sandbox: settings.codex.thread_sandbox,
+            turn_sandbox_policy: normalize_optional_map(settings.codex.turn_sandbox_policy),
+            turn_timeout_ms: settings.codex.turn_timeout_ms,
+            read_timeout_ms: settings.codex.read_timeout_ms,
+            stall_timeout_ms: settings.codex.stall_timeout_ms
+        }
+      else
+        # Non-codex agent: ignore codex.* fields, use agent.* fields only
+        settings.agent
+      end
 
-    %{settings | agent: codex}
+    %{settings | tracker: tracker, workspace: workspace, agent: agent}
   end
 
   defp normalize_keys(value) when is_map(value) do

@@ -270,7 +270,23 @@ Fields:
 - `retry_attempts` (map `issue_id -> RetryEntry`)
 - `completed` (set of issue IDs; bookkeeping only, not dispatch gating)
 - `agent_totals` (aggregate tokens + runtime seconds for all agent types)
+  - `input_tokens` (integer): cumulative input tokens across all run attempts
+  - `output_tokens` (integer): cumulative output tokens across all run attempts
+  - `total_tokens` (integer): cumulative total tokens across all run attempts
+  - `seconds_running` (integer): cumulative runtime in seconds across all run attempts
 - `codex_rate_limits` (latest rate-limit snapshot from agent events)
+
+##### agent_totals Aggregation
+
+Token totals are accumulated through the following mechanisms:
+
+1. **Per-turn token updates**: After each runner turn, the runner's `token_counts()` is called and the delta is applied to `agent_totals`
+2. **Per-run-attempt completion**: When a run attempt completes (either successfully or with error), the final token counts for that session are aggregated into `agent_totals` and a structured `Logger.info` is emitted with metadata including: `issue_id`, `agent_kind`, `input_tokens`, `output_tokens`, `total_tokens`
+3. **Stall events**: When an agent is detected as stalled, the event data includes `last_output_age_ms` for monitoring
+
+Public API functions:
+- `Orchestrator.total_tokens_for_issue(issue_id)` - Returns token totals for a specific issue
+- `Orchestrator.total_tokens_all_agents()` - Returns cumulative token totals across all agents
 
 ### 4.2 Stable Identifiers and Normalization Rules
 

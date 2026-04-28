@@ -495,7 +495,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
       max_concurrent_agents: 3,
       running: %{},
       claimed: MapSet.new(),
-      codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+      agent_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
       retry_attempts: %{}
     }
 
@@ -517,7 +517,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
       max_concurrent_agents: 3,
       running: %{},
       claimed: MapSet.new(),
-      codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+      agent_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
       retry_attempts: %{}
     }
 
@@ -537,7 +537,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
       max_concurrent_agents: 3,
       running: %{},
       claimed: MapSet.new(),
-      codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+      agent_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
       retry_attempts: %{}
     }
 
@@ -1286,6 +1286,146 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
       assert trace =~ workspace_path
     after
       File.rm_rf(test_root)
+    end
+  end
+
+  describe "agent.kind backward compatibility" do
+    test "agent.kind defaults to codex when absent (backward compat for existing WORKFLOW.md)" do
+      # Minimal WORKFLOW.md with only tracker + workspace config (no agent.kind)
+      # should default to codex behavior
+      {:ok, settings} =
+        Schema.parse(%{
+          tracker: %{kind: "memory"},
+          workspace: %{}
+        })
+
+      assert settings.agent.kind == "codex"
+      # codex.* fields should be available for backward compat
+      assert settings.agent.command == "codex app-server"
+
+      assert settings.agent.approval_policy == %{
+               "reject" => %{
+                 "sandbox_approval" => true,
+                 "rules" => true,
+                 "mcp_elicitations" => true
+               }
+             }
+    end
+
+    test "codex.command works without explicit agent.kind (legacy WORKFLOW.md format)" do
+      # Old WORKFLOW.md with codex.command set but no agent.kind
+      {:ok, settings} =
+        Schema.parse(%{
+          tracker: %{kind: "memory"},
+          workspace: %{},
+          codex: %{
+            command: "codex --config model=\"gpt-5\" app-server",
+            approval_policy: "never"
+          }
+        })
+
+      assert settings.agent.kind == "codex"
+      assert settings.agent.command == "codex --config model=\"gpt-5\" app-server"
+      assert settings.agent.approval_policy == "never"
+    end
+
+    test "agent.kind: codex with codex.* config works (explicit codex)" do
+      # New format with agent.kind: codex and codex.* config
+      {:ok, settings} =
+        Schema.parse(%{
+          tracker: %{kind: "memory"},
+          workspace: %{},
+          agent: %{kind: "codex"},
+          codex: %{
+            command: "codex --config shell_environment_policy.inherit=all app-server",
+            approval_policy: %{accept: %{sandbox_approval: false}},
+            thread_sandbox: "full-access",
+            turn_timeout_ms: 5_000_000
+          }
+        })
+
+      assert settings.agent.kind == "codex"
+      assert settings.agent.command == "codex --config shell_environment_policy.inherit=all app-server"
+      assert settings.agent.approval_policy == %{"accept" => %{"sandbox_approval" => false}}
+      assert settings.agent.thread_sandbox == "full-access"
+      assert settings.agent.turn_timeout_ms == 5_000_000
+    end
+
+    test "agent.kind: opencode ignores codex.* config silently" do
+      # When agent.kind is NOT codex, codex.* keys should be silently ignored
+      {:ok, settings} =
+        Schema.parse(%{
+          tracker: %{kind: "memory"},
+          workspace: %{},
+          agent: %{kind: "opencode"},
+          codex: %{
+            command: "THIS SHOULD BE IGNORED",
+            approval_policy: "never",
+            thread_sandbox: "workspace-write"
+          }
+        })
+
+      assert settings.agent.kind == "opencode"
+      # codex.* fields should NOT be present in agent settings
+      # Opencode uses defaults or agent-level fields
+      assert settings.agent.command == nil
+
+      assert settings.agent.approval_policy == %{
+               "reject" => %{
+                 "sandbox_approval" => true,
+                 "rules" => true,
+                 "mcp_elicitations" => true
+               }
+             }
+    end
+
+    test "agent.kind: claude-code ignores codex.* config silently" do
+      {:ok, settings} =
+        Schema.parse(%{
+          tracker: %{kind: "memory"},
+          workspace: %{},
+          agent: %{kind: "claude-code", provider: "anthropic", model: "claude-sonnet-4-20250514"},
+          codex: %{
+            command: "IGNORED",
+            approval_policy: "never",
+            turn_timeout_ms: 999_999
+          }
+        })
+
+      assert settings.agent.kind == "claude-code"
+      assert settings.agent.provider == "anthropic"
+      assert settings.agent.model == "claude-sonnet-4-20250514"
+      # codex.* fields should be ignored
+      assert settings.agent.command == nil
+      assert settings.agent.turn_timeout_ms == 3_600_000
+    end
+
+    test "agent.kind: hermes with agent-level config works without codex.*" do
+      {:ok, settings} =
+        Schema.parse(%{
+          tracker: %{kind: "memory"},
+          workspace: %{},
+          agent: %{
+            kind: "hermes",
+            max_concurrent_agents: 5,
+            max_turns: 15
+          }
+        })
+
+      assert settings.agent.kind == "hermes"
+      assert settings.agent.max_concurrent_agents == 5
+      assert settings.agent.max_turns == 15
+      # codex.* not used
+      assert settings.codex == nil || settings.codex.command == "codex app-server"
+    end
+
+    test "invalid agent.kind is rejected" do
+      assert {:error, {:invalid_workflow_config, _}} =
+               Schema.parse(%{
+                 tracker: %{kind: "memory"},
+                 workspace: %{},
+                 agent: %{kind: "invalid-agent"}
+               })
     end
   end
 end
