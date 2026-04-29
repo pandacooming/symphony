@@ -60,30 +60,30 @@ defmodule SymphonyElixir.AgentRunner.OpenClawRunnerTest do
     test "event tuples have correct structure" do
       # Events should be {:event, atom(), map()}
       event = {:event, :turn_start, %{turn_number: 1, session_id: "test-123"}}
-      assert match?({:event, atom(), map()}, event)
+      assert match?({:event, _, _}, event)
     end
 
     test "done tuples have correct structure" do
       done_event = {:done, 5, %{token_counts: %{input_tokens: 1000, output_tokens: 500, total_tokens: 1500}}}
 
-      assert match?({:done, non_neg_integer(), map()}, done_event)
+      assert match?({:done, n, _} when is_integer(n) and n >= 0, done_event)
     end
 
     test "tool_call event structure" do
       tool_call = {:event, :tool_call, %{tool_name: "Read", arguments: %{"path" => "/tmp/test"}}}
-      assert match?({:event, atom(), map()}, tool_call)
+      assert match?({:event, _, _}, tool_call)
       assert elem(tool_call, 1) == :tool_call
     end
 
     test "stall event structure" do
       stall = {:event, :stall, %{reason: :turn_timeout, turn_number: 1}}
-      assert match?({:event, atom(), map()}, stall)
+      assert match?({:event, _, _}, stall)
       assert elem(stall, 1) == :stall
     end
 
     test "error event structure" do
       error = {:event, :error, %{phase: :session_start, reason: :openclaw_not_found}}
-      assert match?({:event, atom(), map()}, error)
+      assert match?({:event, _, _}, error)
       assert elem(error, 1) == :error
     end
   end

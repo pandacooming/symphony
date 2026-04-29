@@ -29,9 +29,11 @@ defmodule SymphonyElixir.AppServerTest do
         labels: ["backend"]
       }
 
-      assert {:error, {:invalid_workspace_cwd, :workspace_root, _path}} = AppServer.run(workspace_root, "guard", issue)
+      assert {:error, {:invalid_workspace_cwd, :workspace_root, _path}} =
+               AppServer.run(workspace_root, "guard", issue)
 
-      assert {:error, {:invalid_workspace_cwd, :outside_workspace_root, _path, _root}} = AppServer.run(outside_workspace, "guard", issue)
+      assert {:error, {:invalid_workspace_cwd, :outside_workspace_root, _path, _root}} =
+               AppServer.run(outside_workspace, "guard", issue)
     after
       File.rm_rf(test_root)
     end
@@ -67,7 +69,8 @@ defmodule SymphonyElixir.AppServerTest do
         labels: ["backend"]
       }
 
-      assert {:error, {:invalid_workspace_cwd, :symlink_escape, ^symlink_workspace, _root}} = AppServer.run(symlink_workspace, "guard", issue)
+      assert {:error, {:invalid_workspace_cwd, :symlink_escape, ^symlink_workspace, _root}} =
+               AppServer.run(symlink_workspace, "guard", issue)
     after
       File.rm_rf(test_root)
     end
@@ -250,7 +253,8 @@ defmodule SymphonyElixir.AppServerTest do
         labels: ["backend"]
       }
 
-      assert {:error, {:turn_input_required, payload}} = AppServer.run(workspace, "Needs input", issue)
+      assert {:error, {:turn_input_required, payload}} =
+               AppServer.run(workspace, "Needs input", issue)
 
       assert payload["method"] == "turn/input_required"
     after
@@ -312,7 +316,8 @@ defmodule SymphonyElixir.AppServerTest do
         labels: ["backend"]
       }
 
-      assert {:error, {:approval_required, payload}} = AppServer.run(workspace, "Handle approval request", issue)
+      assert {:error, {:approval_required, payload}} =
+               AppServer.run(workspace, "Handle approval request", issue)
 
       assert payload["method"] == "item/commandExecution/requestApproval"
     after
@@ -619,7 +624,8 @@ defmodule SymphonyElixir.AppServerTest do
 
       on_message = fn message -> send(self(), {:app_server_message, message}) end
 
-      assert {:ok, _result} = AppServer.run(workspace, "Handle generic tool input", issue, on_message: on_message)
+      assert {:ok, _result} =
+               AppServer.run(workspace, "Handle generic tool input", issue, on_message: on_message)
 
       assert_received {:app_server_message,
                        %{
@@ -705,7 +711,8 @@ defmodule SymphonyElixir.AppServerTest do
         labels: ["backend"]
       }
 
-      assert {:ok, _result} = AppServer.run(workspace, "Handle option based tool input", issue)
+      assert {:ok, _result} =
+               AppServer.run(workspace, "Handle option based tool input", issue)
 
       trace = File.read!(trace_file)
       lines = String.split(trace, "\n", trim: true)
@@ -921,7 +928,8 @@ defmodule SymphonyElixir.AppServerTest do
         }
       end
 
-      assert {:ok, _result} = AppServer.run(workspace, "Handle supported tool calls", issue, tool_executor: tool_executor)
+      assert {:ok, _result} =
+               AppServer.run(workspace, "Handle supported tool calls", issue, tool_executor: tool_executor)
 
       assert_received {:tool_called, "linear_graphql",
                        %{
@@ -1185,7 +1193,8 @@ defmodule SymphonyElixir.AppServerTest do
 
       log =
         capture_log(fn ->
-          assert {:ok, _result} = AppServer.run(workspace, "Capture stderr log", issue, on_message: on_message)
+          assert {:ok, _result} =
+                   AppServer.run(workspace, "Capture stderr log", issue, on_message: on_message)
         end)
 
       assert_received {:app_server_message, %{event: :turn_completed}}
@@ -1257,7 +1266,8 @@ defmodule SymphonyElixir.AppServerTest do
       test_pid = self()
       on_message = fn message -> send(test_pid, {:app_server_message, message}) end
 
-      assert {:ok, _result} = AppServer.run(workspace, "Capture malformed protocol line", issue, on_message: on_message)
+      assert {:ok, _result} =
+               AppServer.run(workspace, "Capture malformed protocol line", issue, on_message: on_message)
 
       assert_received {:app_server_message, %{event: :malformed, payload: "{\"method\":\"turn/completed\""}}
       assert_received {:app_server_message, %{event: :turn_completed}}

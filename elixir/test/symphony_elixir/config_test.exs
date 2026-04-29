@@ -37,7 +37,7 @@ defmodule SymphonyElixir.ConfigTest do
       write_workflow_file!(Workflow.workflow_file_path(), agent_kind: "unknown-agent")
 
       assert_raise ArgumentError,
-                   ~s(Unknown agent kind: "unknown-agent". Valid kinds are: codex, claude-code, opencode, openclaw, hermes),
+                   ~s(Invalid WORKFLOW.md config: agent.kind is invalid: 'unknown-agent'. Supported: codex, claude-code, opencode, openclaw, hermes),
                    fn ->
                      Config.agent_kind()
                    end

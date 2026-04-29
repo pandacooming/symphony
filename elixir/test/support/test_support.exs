@@ -107,10 +107,6 @@ defmodule SymphonyElixir.TestSupport do
           max_turns: 20,
           max_retry_backoff_ms: 300_000,
           max_concurrent_agents_by_state: %{},
-          agent_kind: "codex",
-          agent_command: nil,
-          agent_model: nil,
-          agent_provider: nil,
           codex_command: "codex app-server",
           codex_approval_policy: %{reject: %{sandbox_approval: true, rules: true, mcp_elicitations: true}},
           codex_thread_sandbox: "workspace-write",
@@ -128,6 +124,11 @@ defmodule SymphonyElixir.TestSupport do
           observability_render_interval_ms: 16,
           server_port: nil,
           server_host: nil,
+          agent_kind: "codex",
+          agent_command: nil,
+          agent_model: nil,
+          agent_provider: nil,
+          agent_config_json: nil,
           prompt: @workflow_prompt
         ],
         overrides
@@ -148,10 +149,6 @@ defmodule SymphonyElixir.TestSupport do
     max_turns = Keyword.get(config, :max_turns)
     max_retry_backoff_ms = Keyword.get(config, :max_retry_backoff_ms)
     max_concurrent_agents_by_state = Keyword.get(config, :max_concurrent_agents_by_state)
-    agent_kind = Keyword.get(config, :agent_kind)
-    agent_command = Keyword.get(config, :agent_command)
-    agent_model = Keyword.get(config, :agent_model)
-    agent_provider = Keyword.get(config, :agent_provider)
     codex_command = Keyword.get(config, :codex_command)
     codex_approval_policy = Keyword.get(config, :codex_approval_policy)
     codex_thread_sandbox = Keyword.get(config, :codex_thread_sandbox)
@@ -169,6 +166,11 @@ defmodule SymphonyElixir.TestSupport do
     observability_render_interval_ms = Keyword.get(config, :observability_render_interval_ms)
     server_port = Keyword.get(config, :server_port)
     server_host = Keyword.get(config, :server_host)
+    agent_kind = Keyword.get(config, :agent_kind)
+    agent_command = Keyword.get(config, :agent_command)
+    agent_model = Keyword.get(config, :agent_model)
+    agent_provider = Keyword.get(config, :agent_provider)
+    agent_config_json = Keyword.get(config, :agent_config_json)
     prompt = Keyword.get(config, :prompt)
 
     sections =
@@ -187,7 +189,16 @@ defmodule SymphonyElixir.TestSupport do
         "workspace:",
         "  root: #{yaml_value(workspace_root)}",
         worker_yaml(worker_ssh_hosts, worker_max_concurrent_agents_per_host),
-        agent_yaml(agent_kind, agent_command, agent_model, agent_provider),
+        "agent:",
+        "  max_concurrent_agents: #{yaml_value(max_concurrent_agents)}",
+        "  max_turns: #{yaml_value(max_turns)}",
+        "  max_retry_backoff_ms: #{yaml_value(max_retry_backoff_ms)}",
+        "  max_concurrent_agents_by_state: #{yaml_value(max_concurrent_agents_by_state)}",
+        agent_section_line("kind", if(agent_kind && agent_kind != "codex", do: agent_kind)),
+        agent_section_line("command", agent_command),
+        agent_section_line("model", agent_model),
+        agent_section_line("provider", agent_provider),
+        agent_section_line("config_json", agent_config_json),
         "codex:",
         "  command: #{yaml_value(codex_command)}",
         "  approval_policy: #{yaml_value(codex_approval_policy)}",
@@ -206,6 +217,9 @@ defmodule SymphonyElixir.TestSupport do
 
     Enum.join(sections, "\n") <> "\n"
   end
+
+  defp agent_section_line(_key, nil), do: nil
+  defp agent_section_line(key, value), do: "  #{key}: #{yaml_value(value)}"
 
   defp yaml_value(value) when is_binary(value) do
     "\"" <> String.replace(value, "\"", "\\\"") <> "\""
@@ -256,33 +270,6 @@ defmodule SymphonyElixir.TestSupport do
         "  max_concurrent_agents_per_host: #{yaml_value(max_concurrent_agents_per_host)}"
     ]
     |> Enum.reject(&(&1 in [nil, false]))
-    |> Enum.join("\n")
-  end
-
-  defp agent_yaml(nil, nil, nil, nil) do
-    [
-      "agent:",
-      "  max_concurrent_agents: #{yaml_value(10)}",
-      "  max_turns: #{yaml_value(20)}",
-      "  max_retry_backoff_ms: #{yaml_value(300_000)}",
-      "  max_concurrent_agents_by_state: #{yaml_value(%{})}"
-    ]
-    |> Enum.join("\n")
-  end
-
-  defp agent_yaml(kind, command, model, provider) do
-    [
-      "agent:",
-      "  max_concurrent_agents: #{yaml_value(10)}",
-      "  max_turns: #{yaml_value(20)}",
-      "  max_retry_backoff_ms: #{yaml_value(300_000)}",
-      "  max_concurrent_agents_by_state: #{yaml_value(%{})}",
-      kind && "  kind: #{yaml_value(kind)}",
-      command && "  command: #{yaml_value(command)}",
-      model && "  model: #{yaml_value(model)}",
-      provider && "  provider: #{yaml_value(provider)}"
-    ]
-    |> Enum.reject(&is_nil/1)
     |> Enum.join("\n")
   end
 

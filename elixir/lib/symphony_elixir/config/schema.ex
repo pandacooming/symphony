@@ -122,6 +122,9 @@ defmodule SymphonyElixir.Config.Schema do
   # Agent kinds supported by Symphony
   @agent_kinds ["codex", "claude-code", "opencode", "openclaw", "hermes"]
 
+  @doc "Returns the list of supported agent kinds."
+  def agent_kinds, do: @agent_kinds
+
   defmodule Agent do
     @moduledoc false
     use Ecto.Schema
@@ -140,22 +143,16 @@ defmodule SymphonyElixir.Config.Schema do
       field(:max_concurrent_agents_by_state, :map, default: %{})
       # Agent runtime settings (from codex.* for backward compat; shared across agent types)
       # command is the shell command to launch the agent (agent-specific)
-      field(:command, :string, default: "codex app-server")
+      # nil default: actual default is filled in by *_config() functions or finalize_settings
+      field(:command, :string)
       # provider for API-based agents (claude-code, opencode, openclaw, hermes)
       field(:provider, :string)
       field(:model, :string)
       # agent-specific config stored as JSON string or map
       field(:config_json, :string)
       # Sandbox and timeout settings
-      field(:approval_policy, Schema.StringOrMap,
-        default: %{
-          "reject" => %{
-            "sandbox_approval" => true,
-            "rules" => true,
-            "mcp_elicitations" => true
-          }
-        }
-      )
+      # nil defaults: actual defaults are filled by finalize_settings based on agent kind
+      field(:approval_policy, Schema.StringOrMap)
 
       field(:thread_sandbox, :string, default: "workspace-write")
       field(:turn_sandbox_policy, :map)
@@ -188,7 +185,6 @@ defmodule SymphonyElixir.Config.Schema do
         ],
         empty_values: []
       )
-      |> validate_inclusion(:kind, @agent_kinds)
       |> validate_number(:max_concurrent_agents, greater_than: 0)
       |> validate_number(:max_turns, greater_than: 0)
       |> validate_number(:max_retry_backoff_ms, greater_than: 0)
@@ -197,6 +193,20 @@ defmodule SymphonyElixir.Config.Schema do
       |> validate_number(:stall_timeout_ms, greater_than_or_equal_to: 0)
       |> update_change(:max_concurrent_agents_by_state, &Schema.normalize_state_limits/1)
       |> Schema.validate_state_limits(:max_concurrent_agents_by_state)
+      |> validate_kind_field()
+    end
+
+    # Validates the :kind field for a clear error message.
+    # Kind validation with meaningful error is done in Config.agent_kind().
+    # Here we just skip nil kinds (they get the codex default).
+    defp validate_kind_field(changeset) do
+      kind = get_change(changeset, :kind) || get_field(changeset, :kind)
+
+      cond do
+        is_nil(kind) -> changeset
+        Enum.member?(SymphonyElixir.Config.Schema.agent_kinds(), kind) -> changeset
+        true -> add_error(changeset, :kind, "is invalid: '#{kind}'. Supported: #{Enum.join(SymphonyElixir.Config.Schema.agent_kinds(), ", ")}")
+      end
     end
   end
 
@@ -255,7 +265,6 @@ defmodule SymphonyElixir.Config.Schema do
         ],
         empty_values: []
       )
-      |> validate_inclusion(:kind, @agent_kinds)
       |> validate_number(:turn_timeout_ms, greater_than: 0)
       |> validate_number(:read_timeout_ms, greater_than: 0)
       |> validate_number(:stall_timeout_ms, greater_than_or_equal_to: 0)
@@ -440,28 +449,42 @@ defmodule SymphonyElixir.Config.Schema do
       | root: resolve_path_value(settings.workspace.root, Path.join(System.tmp_dir!(), "symphony_workspaces"))
     }
 
-    # When agent.kind is "codex" (explicit or default), use codex.* config fields for agent settings.
-    # This preserves backward compatibility for existing WORKFLOW.md files that use codex.* keys.
-    # When agent.kind is not "codex", codex.* keys are ignored (silently) and agent defaults are used.
+    # Always fall back to codex.command for agent.command (preserves backward compat
+    # for existing WORKFLOW.md files that set codex.command without explicit agent.kind).
+    # For codex.kind specifically, codex.* fields take precedence (copied into agent).
+    # For other agent kinds, agent.* fields take precedence with codex.command as last resort.
     agent =
       if settings.agent.kind == "codex" do
         # Copy codex fields into agent (codex.* takes precedence when kind is codex)
         %{
           settings.agent
-          | command: settings.codex.command,
-            provider: settings.codex.provider,
-            model: settings.codex.model,
-            config_json: settings.codex.config_json,
+          | command: settings.agent.command || settings.codex.command,
+            provider: settings.agent.provider || settings.codex.provider,
+            model: settings.agent.model || settings.codex.model,
+            config_json: settings.agent.config_json || settings.codex.config_json,
             approval_policy: normalize_keys(settings.codex.approval_policy),
-            thread_sandbox: settings.codex.thread_sandbox,
+            thread_sandbox: settings.agent.thread_sandbox || settings.codex.thread_sandbox,
             turn_sandbox_policy: normalize_optional_map(settings.codex.turn_sandbox_policy),
-            turn_timeout_ms: settings.codex.turn_timeout_ms,
-            read_timeout_ms: settings.codex.read_timeout_ms,
-            stall_timeout_ms: settings.codex.stall_timeout_ms
+            turn_timeout_ms: settings.agent.turn_timeout_ms || settings.codex.turn_timeout_ms,
+            read_timeout_ms: settings.agent.read_timeout_ms || settings.codex.read_timeout_ms,
+            stall_timeout_ms: settings.agent.stall_timeout_ms || settings.codex.stall_timeout_ms
         }
       else
-        # Non-codex agent: ignore codex.* fields, use agent.* fields only
-        settings.agent
+        # Non-codex agent: use agent.* fields directly.
+        # Do NOT copy codex.command here — *_config() functions provide per-agent defaults.
+        # approval_policy falls back to codex defaults (universal concern across all agents).
+        default_approval = %{
+          "reject" => %{
+            "sandbox_approval" => true,
+            "rules" => true,
+            "mcp_elicitations" => true
+          }
+        }
+
+        %{
+          settings.agent
+          | approval_policy: settings.agent.approval_policy || normalize_keys(settings.codex.approval_policy) || default_approval
+        }
       end
 
     %{settings | tracker: tracker, workspace: workspace, agent: agent}

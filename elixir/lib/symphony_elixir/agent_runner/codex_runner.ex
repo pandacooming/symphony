@@ -72,7 +72,8 @@ defmodule SymphonyElixir.AgentRunner.CodexRunner do
       event_queue: [],
       token_counts: %{input_tokens: 0, output_tokens: 0, total_tokens: 0},
       turns_completed: 0,
-      status: :initializing
+      status: :initializing,
+      session: nil
     }
 
     {:ok, state, {:continue, :start_session}}

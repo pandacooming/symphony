@@ -50,13 +50,13 @@ defmodule SymphonyElixir.AgentRunnerTest do
   describe "Behavior types" do
     test "agent_event can be event tuple" do
       event = {:event, :turn_start, %{turn_number: 1}}
-      assert match?({:event, atom(), map()}, event)
+      assert match?({:event, _, _}, event)
     end
 
     test "agent_event can be done tuple" do
       event = {:done, 5, %{token_counts: %{input_tokens: 1000, output_tokens: 500, total_tokens: 1500}}}
 
-      assert match?({:done, non_neg_integer(), map()}, event)
+      assert match?({:done, n, _} when is_integer(n) and n >= 0, event)
     end
 
     test "token_counts type" do
